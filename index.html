@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JSON Viewer</title>
+<style>
+  body{font-family:system-ui,sans-serif;margin:0;padding:16px;background:#f6f7f9;color:#222}
+  h1{font-size:18px;margin:0 0 12px}
+  h2{font-size:14px;margin:14px 0 6px;color:#555}
+  button{padding:6px 14px;margin:0 6px 8px 0;border:1px solid #99a;border-radius:6px;background:#fff;cursor:pointer}
+  button.main{background:#2563eb;color:#fff;border-color:#2563eb}
+  #msg{font-size:13px;margin-left:6px}
+
+  /* กล่อง input / output: ลากมุมขวาล่างเพื่อปรับขนาดได้ */
+  textarea,#out{
+    display:block;width:100%;margin:0;padding:12px;border:1px solid #ccd;border-radius:6px;
+    background:#fff;box-sizing:border-box;overflow:auto;
+    font:13px/1.6 Consolas,Menlo,monospace;
+    resize:both;min-height:80px;max-width:100%;
+  }
+  textarea{height:180px}
+  #out{height:360px;white-space:pre-wrap;word-break:break-word}
+
+  /* tree */
+  details{margin:0}
+  summary{cursor:pointer;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"▼";display:inline-block;width:16px;font-size:10px;color:#888;transition:transform .1s}
+  details:not([open])>summary::before{transform:rotate(-90deg)}
+  .ch{padding-left:20px;border-left:1px dashed #d5d9e0;margin-left:5px}
+  .leaf{padding-left:16px}
+  .hint{color:#888;font-size:12px}
+  details[open]>summary .hint{display:none}
+  .end{padding-left:16px}
+  .cam{border:0;background:#e0e7ff;border-radius:4px;padding:0 5px;margin-left:8px;font-size:11px;line-height:1.5;cursor:pointer;opacity:0;vertical-align:middle}
+  summary:hover>.cam,.leaf:hover>.cam,.cam:focus-visible{opacity:1}
+  @media (hover:none){.cam{opacity:.7}}
+  .cam:hover{background:#c7d2fe}
+  .p{color:#6b7280}
+  .key{color:#1d4ed8} .str{color:#15803d} .num{color:#c2410c} .bool{color:#7e22ce} .null{color:#6b7280;font-style:italic}
+</style>
+</head>
+<body>
+<h1>JSON Viewer</h1>
+
+<h2>Input</h2>
+<textarea id="inp" placeholder="วาง JSON ที่นี่..." spellcheck="false">{"ชื่อ":"สมชาย","อายุ":30,"โสด":true,"ที่อยู่":null,"งานอดิเรก":["อ่านหนังสือ","วิ่ง",{"ชื่อ":"ถ่ายรูป","ระดับ":[1,2,3]}],"ติดต่อ":{"อีเมล":"a@b.com","โทร":"0812345678"},"ว่าง":[]}</textarea>
+
+<h2>Output</h2>
+<button onclick="setAll(true)">ขยายทั้งหมด</button>
+<button onclick="setAll(false)">ยุบทั้งหมด</button>
+<button onclick="fontSize(-1)">A−</button>
+<button onclick="fontSize(1)">A+</button>
+<button onclick="copyOut()">คัดลอก</button>
+<button class="main" onclick="capture()">📷 Capture ทั้งหมด</button>
+<button onclick="inp.value='';out.innerHTML='';msg.textContent=''">ล้าง</button>
+<span id="msg"></span>
+<div id="out"></div>
+
+<script>
+const inp = document.getElementById('inp'), out = document.getElementById('out'), msg = document.getElementById('msg');
+let formatted = '', size = 13;
+
+function el(tag, cls, text){
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+// สร้าง element ของค่าธรรมดา (string/number/boolean/null)
+function prim(v){
+  if (v === null) return el('span','null','null');
+  if (typeof v === 'string') return el('span','str', JSON.stringify(v));
+  if (typeof v === 'number') return el('span','num', String(v));
+  return el('span','bool', String(v));
+}
+
+// ปุ่ม 📷 ประจำแต่ละ node: คลิกเพื่อ capture เฉพาะ node นั้น
+function camBtn(target){
+  const b = el('button','cam','📷 capture');
+  b.type = 'button'; b.title = 'Capture เฉพาะส่วนนี้เป็นรูป';
+  b.onclick = e => { e.preventDefault(); e.stopPropagation(); capture(target); };
+  return b;
+}
+
+// สร้าง tree: รองรับยุบ/ขยายทั้ง object และ array
+function build(v, key, last){
+  const comma = last ? '' : ',';
+  const label = (parent) => {
+    if (key !== null){
+      parent.append(el('span', typeof key === 'number' ? 'p' : 'key', typeof key === 'number' ? key : JSON.stringify(key)), el('span','p',': '));
+    }
+  };
+
+  if (v !== null && typeof v === 'object'){
+    const isArr = Array.isArray(v), keys = Object.keys(v);
+    const open = isArr ? '[' : '{', close = isArr ? ']' : '}';
+
+    if (!keys.length){
+      const d = el('div','leaf'); label(d); d.append(el('span','p', open + close + comma), camBtn(d)); return d;
+    }
+
+    const det = el('details'); det.open = true;
+    const sum = el('summary'); label(sum);
+    sum.append(el('span','p',open),
+               el('span','hint', ' ' + keys.length + (isArr ? ' รายการ' : ' คีย์') + ' … ' + close + comma),
+               camBtn(det));
+    det.append(sum);
+
+    const ch = el('div','ch');
+    keys.forEach((k,i) => ch.append(build(v[k], isArr ? Number(k) : k, i === keys.length-1)));
+    det.append(ch, el('div','end p', close + comma));
+    return det;
+  }
+
+  const d = el('div','leaf'); label(d); d.append(prim(v), el('span','p',comma), camBtn(d)); return d;
+}
+
+function run(){
+  try{
+    const obj = JSON.parse(inp.value);
+    formatted = JSON.stringify(obj, null, 2);
+    out.innerHTML = '';
+    out.append(build(obj, null, true));
+    msg.style.color = 'green'; msg.textContent = '✓ JSON ถูกต้อง';
+  }catch(e){
+    msg.style.color = 'red'; msg.textContent = '✗ ' + e.message;
+  }
+}
+
+function setAll(openIt){
+  const all = out.querySelectorAll('details');
+  all.forEach((d,i) => d.open = (i === 0) ? true : openIt);   // ชั้นนอกสุดเปิดไว้เสมอ
+}
+function fontSize(d){ size = Math.min(28, Math.max(9, size + d)); out.style.fontSize = size + 'px'; }
+function copyOut(){ navigator.clipboard.writeText(formatted); msg.style.color = '#333'; msg.textContent = 'คัดลอกแล้ว'; }
+
+/* ---------- Capture: วาดกล่องแสดงผล (ตามสถานะยุบ/ขยายปัจจุบัน) ลง canvas แล้วเปิดเป็นรูปใน tab ใหม่ ---------- */
+const COLORS = {key:'#1d4ed8', str:'#15803d', num:'#c2410c', bool:'#7e22ce', null:'#6b7280', p:'#6b7280', hint:'#888888', caret:'#888888'};
+
+function collect(node, depth, lines){
+  if (node.tagName === 'DETAILS'){
+    const sum = node.firstElementChild;
+    const segs = [{t: node.open ? '▼ ' : '▶ ', c:'caret'}];
+    sum.childNodes.forEach(s => {
+      if (s.classList.contains('cam')) return;                  // ไม่เอาปุ่ม capture ลงรูป
+      if (s.classList.contains('hint') && node.open) return;   // hint แสดงเฉพาะตอนพับ
+      segs.push({t: s.textContent, c: s.className});
+    });
+    lines.push({d: depth, segs});
+    if (node.open){
+      const ch = node.querySelector(':scope > .ch');
+      Array.from(ch.children).forEach(c => collect(c, depth + 1, lines));
+      lines.push({d: depth, segs: [{t:'  ', c:''}, {t: node.querySelector(':scope > .end').textContent, c:'p'}]});
+    }
+  } else {
+    const segs = [{t:'  ', c:''}];
+    node.childNodes.forEach(s => { if (!s.classList.contains('cam')) segs.push({t: s.textContent, c: s.className}); });
+    lines.push({d: depth, segs});
+  }
+}
+
+function capture(target){
+  target = target || out.firstElementChild;                  // ไม่ระบุ = capture ทั้งหมด
+  if (!target){ msg.style.color='red'; msg.textContent='ยังไม่มีผลลัพธ์ให้ capture'; return; }
+
+  const w = window.open('', '_blank');              // ต้องเปิดทันทีตอนคลิก ไม่งั้นถูก popup blocker บล็อก
+  if (!w){ msg.style.color='red'; msg.textContent='เบราว์เซอร์บล็อกหน้าต่างใหม่ กรุณาอนุญาต popup'; return; }
+
+  const lines = [];
+  collect(target, 0, lines);
+  // ตัดเครื่องหมาย , ท้ายสุดของส่วนที่เลือกออก
+  const lastSegs = lines[lines.length - 1].segs, ls = lastSegs[lastSegs.length - 1];
+  ls.t = ls.t.replace(/,\s*$/, '');
+
+  const font = size + 'px Consolas, Menlo, "Noto Sans Thai", "Sarabun", monospace';
+  const lineH = Math.round(size * 1.6), pad = 16, indent = 20;
+  const m = document.createElement('canvas').getContext('2d');
+  m.font = font;
+
+  let maxW = 0;
+  lines.forEach(l => {
+    let x = l.d * indent;
+    l.segs.forEach(s => { s.x = x; x += m.measureText(s.t).width; });
+    maxW = Math.max(maxW, x);
+  });
+
+  const W = Math.ceil(maxW + pad * 2), H = lines.length * lineH + pad * 2;
+  const scale = Math.max(0.5, Math.min(2, 16000 / W, 16000 / H));   // 2x ให้คมชัด แต่ไม่เกินขีดจำกัดของ canvas
+  const cv = document.createElement('canvas');
+  cv.width = Math.round(W * scale); cv.height = Math.round(H * scale);
+  const g = cv.getContext('2d');
+  g.scale(scale, scale);
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H);
+  g.font = font; g.textBaseline = 'alphabetic';
+  lines.forEach((l, i) => {
+    const y = pad + i * lineH + lineH * 0.72;
+    l.segs.forEach(s => {
+      const cls = (s.c || '').split(' ')[0];
+      g.fillStyle = COLORS[cls] || '#222222';
+      g.fillText(s.t, pad + s.x, y);
+    });
+  });
+
+  const url = cv.toDataURL('image/png');
+
+  w.document.open();
+  w.document.write(
+'<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><title>JSON Capture</title>' +
+'<style>body{margin:0;background:#e5e7eb;font-family:system-ui,sans-serif}' +
+'.bar{position:sticky;top:0;background:#111827;color:#fff;padding:8px 14px;font-size:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}' +
+'.bar button,.bar a{padding:5px 12px;border-radius:6px;border:0;background:#2563eb;color:#fff;cursor:pointer;text-decoration:none;font-size:13px}' +
+'#st{color:#a7f3d0}.wrap{padding:16px}img{display:block;max-width:100%;height:auto;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.25)}</style></head><body>' +
+'<div class="bar"><span>กด <b>Ctrl+C</b> (Mac: <b>⌘C</b>) เพื่อคัดลอกรูปเข้า clipboard</span>' +
+'<button id="cp">คัดลอกรูป</button><a id="dl" download="json-capture.png">ดาวน์โหลด PNG</a><span id="st"></span></div>' +
+'<div class="wrap"><img id="im" alt="JSON capture"></div>' +
+'<script>' +
+'var url=' + JSON.stringify(url) + ';' +
+'var im=document.getElementById("im"),st=document.getElementById("st");' +
+'im.src=url;document.getElementById("dl").href=url;' +
+'function copyImg(){' +
+'  fetch(url).then(function(r){return r.blob()}).then(function(b){' +
+'    return navigator.clipboard.write([new ClipboardItem({"image/png":b})]);' +
+'  }).then(function(){st.style.color="#a7f3d0";st.textContent="✓ คัดลอกรูปแล้ว";}' +
+'  ).catch(function(){st.style.color="#fecaca";st.textContent="คัดลอกอัตโนมัติไม่ได้ — คลิกขวาที่รูป > Copy image";});' +
+'}' +
+'document.getElementById("cp").onclick=copyImg;' +
+'document.addEventListener("keydown",function(e){if((e.ctrlKey||e.metaKey)&&(e.key==="c"||e.key==="C")){e.preventDefault();copyImg();}});' +
+'window.focus();' +
+'<\/script></body></html>');
+  w.document.close();
+}
+
+inp.addEventListener('input', run);
+run();
+</script>
+</body>
+</html>
